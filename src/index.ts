@@ -1,9 +1,10 @@
-import { definePlugin, defineTool, z, type PluginContext } from "@weavetab/sdk";
+import { definePlugin, defineTool, definePrompt, defineResource, z, type PluginContext } from "@weavetab/sdk";
 import { arm, sessOf } from "./page.js";
 import { tagMap } from "./causal.js";
 import { canvasTool } from "./canvas.js";
 import { reflexTool, statusTool } from "./reflex.js";
 import { autopilotTool } from "./autopilot.js";
+import { readFeed } from "./surface.js";
 
 let winMs = 4000;
 
@@ -11,9 +12,17 @@ const asText = (v: unknown) => ({ content: [{ type: "text", text: JSON.stringify
 
 const plugin = definePlugin({
   name: "@weavetab/plugin-realtime",
-  version: "0.1.0",
+  version: "0.2.0",
   description: "Causal tags for browser_map, in-page reflex rules, canvas entity sampling, bounded click loop.",
   defaultConfig: { causalWindowMs: 4000 },
+  permissions: {
+    cdp: { evaluate: true, input: true, reason: "Page probe, canvas spy, 60Hz reflex loop, and trusted CDP mouse clicks." },
+    tools: { add: true, reason: "Registers realtime_canvas, realtime_reflex, realtime_autopilot and realtime_status." },
+    prompts: { add: true, reason: "Registers /realtime_watch to guide setting up 60Hz DOM or canvas reflexes." },
+    resources: { add: true, reason: "Registers @realtime_feed (realtime://feed) for live reflex, DOM, and canvas telemetry." },
+    hooks: { onBeforeAction: true, onAfterAction: true, reason: "Arms page probe and appends {new ...} causal tags to browser_map." },
+    network: { hosts: ["127.0.0.1", "localhost"], reason: "Optional local model_url in realtime_autopilot." },
+  },
 
   async onBeforeAction(_tool: string, _args: Record<string, any>, sess?: any) {
     if (sess?.Runtime) await arm(sess).catch(() => {}); // page may be mid-navigation, next call retries
@@ -108,6 +117,41 @@ const plugin = definePlugin({
         requiresSession: true,
         schema: { wait_ms: z.number().optional() },
         handler: async (a, ctx) => asText(await statusTool(sessOf(ctx), a.wait_ms)),
+      })
+    );
+
+    ctx.mcp.registerPrompt?.(
+      definePrompt({
+        name: "realtime_watch",
+        title: "Watch & React (60Hz Reflex)",
+        description: "Set up an in-page 60Hz reflex rule or canvas game loop and wait until it finishes.",
+        arguments: {
+          goal: z.string().describe("What to watch for and trigger (e.g. 'click Claim as soon as it appears' or 'jump over green obstacles in the canvas game')"),
+          mode: z.string().optional().describe("'dom', 'canvas', or 'auto' (default 'auto')"),
+        },
+        handler: async ({ goal, mode }, sctx) => {
+          const feed = await readFeed(sessOf(sctx), winMs).catch(() => ({ active_tab: false }));
+          const m = (mode || "auto").toLowerCase();
+          return [
+            `Goal: ${goal}`,
+            `Mode: ${m}`,
+            `Live state: ${JSON.stringify(feed)}`,
+            m === "canvas"
+              ? "1. Call realtime_canvas with action='sample' to inspect moving entity signatures and velocities.\n2. Arm realtime_reflex with when.canvas ({ names, js }) using gap(E.a[0], E.b[0]) or dist(E.a[0], E.b[0]).\n3. Call realtime_status with wait_ms to block until the reflex completes."
+              : "1. If targeting a 2D <canvas>, run realtime_canvas (action='sample') first to grab entity signatures; if targeting DOM changes, pick a selector/text filter (set only_new=true to ignore elements already on screen).\n2. Arm the rule with realtime_reflex (action='add').\n3. Call realtime_status with wait_ms (up to 30000) to sleep until the reflex hits max_hits or stop_selector.",
+          ].join("\n\n");
+        },
+      })
+    );
+
+    ctx.mcp.registerResource?.(
+      defineResource({
+        name: "realtime_feed",
+        title: "Realtime Page Feed",
+        uri: "realtime://feed",
+        mimeType: "application/json",
+        description: "Live snapshot of active 60Hz reflex rules, recently mutated DOM elements with click distance, and tracked Canvas2D entities.",
+        read: async (_uri, _vars, sctx) => JSON.stringify(await readFeed(sessOf(sctx), winMs), null, 2),
       })
     );
 

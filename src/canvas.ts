@@ -158,3 +158,7 @@ export async function canvasTool(sess: any, a: { action: "sample" | "attach" | "
   if (!got) throw new Error("no frames seen: tab hidden, or the game does not use requestAnimationFrame");
   return run(sess, REPORT);
 }
+
+export function canvasSnap(sess: any) {
+  return run(sess, `window.__wt_cv && window.__wt_cv.frames.length ? ${REPORT} : null`);
+}

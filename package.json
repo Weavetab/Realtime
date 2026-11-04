@@ -1,6 +1,6 @@
 {
   "name": "@weavetab/plugin-realtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Causal age/proximity tags for browser_map, 60Hz in-page reflex rules, canvas entity sampling and a bounded click loop for Weavetab.",
   "type": "module",
   "main": "dist/index.js",
@@ -25,7 +25,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@weavetab/sdk": "^2.6.0"
+    "@weavetab/sdk": "^2.6.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

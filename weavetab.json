@@ -2,11 +2,11 @@
   "$schema": "https://weavetab.dev/schema/plugin.json",
   "name": "@weavetab/plugin-realtime",
   "displayName": "Realtime",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Causal tags for browser_map, in-page reflex rules, canvas entity sampling and a bounded click loop for Weavetab.",
   "entry": "dist/index.js",
   "engines": {
-    "weavetab": ">=2.6.0",
+    "weavetab": ">=2.6.1",
     "node": ">=18.0.0"
   },
   "environments": ["mcp"],
@@ -24,6 +24,14 @@
     "tools": {
       "add": true,
       "reason": "Registers realtime_canvas, realtime_reflex, realtime_autopilot and realtime_status."
+    },
+    "prompts": {
+      "add": true,
+      "reason": "Registers /realtime_watch to guide setting up 60Hz DOM or canvas reflexes with live page state."
+    },
+    "resources": {
+      "add": true,
+      "reason": "Registers @realtime_feed (realtime://feed) for live reflex, causal DOM, and canvas entity telemetry."
     },
     "hooks": {
       "onBeforeAction": true,
@@ -117,6 +125,34 @@
         "type": "object",
         "properties": { "wait_ms": { "type": "number" } }
       }
+    }
+  ],
+  "prompts": [
+    {
+      "name": "realtime_watch",
+      "title": "Watch & React (60Hz Reflex)",
+      "description": "Set up an in-page 60Hz reflex rule or canvas game loop and wait until it finishes.",
+      "arguments": [
+        {
+          "name": "goal",
+          "description": "What to watch for and trigger (e.g. 'click Claim as soon as it appears' or 'jump over green obstacles in the canvas game')",
+          "required": true
+        },
+        {
+          "name": "mode",
+          "description": "'dom', 'canvas', or 'auto' (default 'auto')",
+          "required": false
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "name": "realtime_feed",
+      "title": "Realtime Page Feed",
+      "uri": "realtime://feed",
+      "mimeType": "application/json",
+      "description": "Live snapshot of active 60Hz reflex rules, recently mutated DOM elements with click distance, and tracked Canvas2D entities."
     }
   ]
 }

@@ -1,6 +1,6 @@
 # @weavetab/plugin-realtime
 
-Weavetab plugin for pages that change faster than an LLM can look at them. Four tools and one hook:
+Weavetab plugin for pages that change faster than an LLM can look at them. Four tools, one `/` command, one `@` mention, and one hook:
 
 | | what it does |
 |---|---|
@@ -9,6 +9,8 @@ Weavetab plugin for pages that change faster than an LLM can look at them. Four 
 | `realtime_reflex` | registers a rule that runs inside the page every animation frame, no LLM round-trip |
 | `realtime_autopilot` | bounded click loop for short sub-goals ("accept cookies") |
 | `realtime_status` | state of the above; can block until reflexes finish |
+| `/realtime_watch` | MCP Prompt (`/realtime_watch goal=... mode=auto`) that snapshots live tab state and guides the agent through arming a 60Hz DOM or canvas reflex |
+| `@realtime_feed` | MCP Resource (`realtime://feed`) returning active reflexes, newly mutated DOM elements with click distance, and tracked Canvas2D entities |
 
 Nothing in `@weavetab/mcp` or `@weavetab/sdk` is modified. It only uses the plugin hooks and the CDP session Weavetab already hands to plugins.
 
@@ -18,7 +20,7 @@ Nothing in `@weavetab/mcp` or `@weavetab/sdk` is modified. It only uses the plug
 npm install @weavetab/plugin-realtime
 ```
 
-Requires Weavetab `>=2.6.0` and Node `>=18`. The plugin declares `cdp.evaluate`, `cdp.input`, `tools.add`, `hooks.onBeforeAction/onAfterAction` and a `network` permission for `127.0.0.1`/`localhost` (only used by `model_url`).
+Requires Weavetab `>=2.6.1` and Node `>=18`. The plugin declares `cdp.evaluate`, `cdp.input`, `tools.add`, `prompts.add`, `resources.add`, `hooks.onBeforeAction/onAfterAction` and a `network` permission for `127.0.0.1`/`localhost` (only used by `model_url`).
 
 ## Causal tags
 

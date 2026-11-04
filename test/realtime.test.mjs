@@ -75,9 +75,21 @@ test("manifest passes sdk preflight and matches registered tools", async () => {
 
   const mod = await dist("index.js");
   const names = [];
-  await mod.default.onLoad({ config: {}, mcp: { registerTool: (t) => names.push(t.name) }, logger: { info() {} } });
+  const prompts = [];
+  const resources = [];
+  await mod.default.onLoad({
+    config: {},
+    mcp: {
+      registerTool: (t) => names.push(t.name),
+      registerPrompt: (p) => prompts.push(p),
+      registerResource: (r) => resources.push(r),
+    },
+    logger: { info() {} },
+  });
   const manifest = JSON.parse(fs.readFileSync(path.join(root, "weavetab.json"), "utf8"));
   assert.deepEqual(names.sort(), manifest.tools.map((t) => t.name).sort());
+  assert.deepEqual(prompts.map((p) => p.name), manifest.prompts.map((p) => p.name));
+  assert.deepEqual(resources.map((r) => r.name), manifest.resources.map((r) => r.name));
   assert.equal(manifest.license, "Apache-2.0");
 });
 
@@ -242,4 +254,48 @@ test("autopilot takes the model's pick, and falls back when the model is down", 
   const dead = await autopilotTool(tab, { goal: "start welcome tour", model_url: "http://127.0.0.1:9/x", model_timeout_ms: 300, max_steps: 2 });
   assert.ok(dead.model_error);
   assert.equal(dead.steps[0].via, "scorer");
+});
+
+test("/realtime_watch and @realtime_feed return live DOM, reflex and canvas state", { skip }, async () => {
+  const mod = await dist("index.js");
+  const { arm } = await dist("page.js");
+  const { canvasTool } = await dist("canvas.js");
+  const { reflexTool } = await dist("reflex.js");
+
+  let promptDef, resDef;
+  await mod.default.onLoad({
+    config: { causalWindowMs: 4000 },
+    mcp: {
+      registerTool() {},
+      registerPrompt: (p) => { promptDef = p; },
+      registerResource: (r) => { resDef = r; },
+    },
+    logger: { info() {} },
+  });
+  assert.equal(promptDef.name, "realtime_watch");
+  assert.equal(resDef.name, "realtime_feed");
+  assert.equal(resDef.uri, "realtime://feed");
+
+  await open(GAME);
+  await arm(tab);
+  await canvasTool(tab, { action: "sample", frames: 3 });
+  await ev(`document.body.insertAdjacentHTML('beforeend', '<button id=claim style="position:absolute;left:10px;top:140px;width:80px;height:28px">Claim reward</button>'); 0`);
+  await reflexTool(tab, {
+    action: "add", id: "watch-claim",
+    when: { selector: "#claim", text: "claim" },
+    do: { type: "click" }, max_hits: 1, cooldown_ms: 50,
+  });
+
+  const raw = await resDef.read("realtime://feed", {}, { session: tab });
+  const feed = JSON.parse(raw);
+  assert.equal(feed.probe, true);
+  assert.ok(feed.recent_elements.some((e) => e.id === "claim" && e.label === "Claim reward"));
+  assert.ok(feed.reflexes.some((r) => r.id === "watch-claim"));
+  assert.ok(Array.isArray(feed.canvas.entities) && feed.canvas.entities.length >= 2);
+
+  const msg = await promptDef.handler({ goal: "jump over green obstacles", mode: "canvas" }, { session: tab });
+  assert.match(msg, /Goal: jump over green obstacles/);
+  assert.match(msg, /Mode: canvas/);
+  assert.match(msg, /realtime_canvas/);
+  assert.match(msg, /watch-claim/);
 });
