@@ -1,72 +1,155 @@
-import { definePlugin, defineTool, definePrompt, defineResource, z, type PluginContext } from "@weavetab/sdk";
-import { arm, sessOf } from "./page.js";
+import {
+  definePlugin,
+  defineTool,
+  defineCommand,
+  definePrompt,
+  defineResource,
+  z,
+  type PluginContext,
+} from "@weavetab/sdk";
+import { sessOf, arm } from "./page.js";
 import { tagMap } from "./causal.js";
 import { canvasTool } from "./canvas.js";
 import { reflexTool, statusTool } from "./reflex.js";
 import { autopilotTool } from "./autopilot.js";
 import { readFeed } from "./surface.js";
 
-let winMs = 4000;
+const statusCommand = defineCommand({
+  name: "status",
+  description: "Read the in-page realtime probe state, canvas frame counter, and active 60Hz reflex rules.",
+  usage: "weavetab plugin use realtime status [--wait_ms <ms>]",
+  requiresSession: true,
+  schema: {
+    wait_ms: z.number().optional().describe("Block up to wait_ms until active reflexes finish"),
+  },
+  handler: async (args: { wait_ms?: number }, ctx: any) => {
+    const sess = sessOf(ctx);
+    return await statusTool(sess, Number(args.wait_ms || 0));
+  },
+});
 
-const asText = (v: unknown) => ({ content: [{ type: "text", text: JSON.stringify(v, null, 2) }] });
+const reflexClearCommand = defineCommand({
+  name: "reflex-clear",
+  description: "Clear all active 60Hz reflex rules on the active browser tab via CLI.",
+  usage: "weavetab plugin use realtime reflex-clear",
+  requiresSession: true,
+  handler: async (_args: Record<string, never>, ctx: any) => {
+    const sess = sessOf(ctx);
+    return await reflexTool(sess, { action: "clear" });
+  },
+});
 
-const plugin = definePlugin({
+const autopilotCommand = defineCommand({
+  name: "autopilot",
+  description: "Run bounded in-page autopilot toward a goal directly via CLI.",
+  usage: "weavetab plugin use realtime autopilot --goal <text> [--max_steps <n>]",
+  requiresSession: true,
+  schema: {
+    goal: z.string().describe("Natural language click goal"),
+    max_steps: z.number().optional().describe("Maximum click steps (default 5)"),
+    stop_when_text: z.string().optional().describe("Stop when this text appears"),
+  },
+  handler: async (args: { goal: string; max_steps?: number; stop_when_text?: string }, ctx: any) => {
+    const sess = sessOf(ctx);
+    return await autopilotTool(sess, {
+      goal: args.goal,
+      max_steps: args.max_steps ?? 5,
+      stop_when_text: args.stop_when_text,
+    });
+  },
+});
+
+export const realtimePlugin = definePlugin({
   name: "@weavetab/plugin-realtime",
-  version: "0.2.0",
-  description: "Causal tags for browser_map, in-page reflex rules, canvas entity sampling, bounded click loop.",
-  defaultConfig: { causalWindowMs: 4000 },
+  version: "0.3.0",
+  description:
+    "Causal age/proximity tags for browser_map, 60Hz in-page reflex rules, canvas entity sampling and a bounded click loop.",
+  agentsMd: "AGENTS.md",
+  defaultConfig: {
+    causalWindowMs: 4000,
+  },
   permissions: {
-    cdp: { evaluate: true, input: true, reason: "Page probe, canvas spy, 60Hz reflex loop, and trusted CDP mouse clicks." },
-    tools: { add: true, reason: "Registers realtime_canvas, realtime_reflex, realtime_autopilot and realtime_status." },
-    prompts: { add: true, reason: "Registers /realtime_watch to guide setting up 60Hz DOM or canvas reflexes." },
-    resources: { add: true, reason: "Registers @realtime_feed (realtime://feed) for live reflex, DOM, and canvas telemetry." },
-    hooks: { onBeforeAction: true, onAfterAction: true, reason: "Arms page probe and appends {new ...} causal tags to browser_map." },
-    network: { hosts: ["127.0.0.1", "localhost"], reason: "Optional local model_url in realtime_autopilot." },
+    cdp: {
+      evaluate: true,
+      input: true,
+      reason: "Installs the in-page MutationObserver, hooks Canvas2D/rAF, and dispatches click/key events.",
+    },
+    tools: {
+      add: true,
+      reason: "Registers realtime_canvas, realtime_reflex, realtime_autopilot, and realtime_status.",
+    },
+    commands: {
+      add: true,
+      reason: "Registers status and reflex-clear CLI commands.",
+    },
+    prompts: {
+      add: true,
+      reason: "Registers the /realtime_watch prompt utility.",
+    },
+    resources: {
+      add: true,
+      reason: "Registers the @realtime_feed resource utility.",
+    },
+    hooks: {
+      onBeforeAction: true,
+      onAfterAction: true,
+      reason: "Arms the in-page mutation probe before actions and tags newly added nodes in browser_map output.",
+    },
+    network: {
+      domains: ["127.0.0.1", "localhost"],
+      reason: "Allows realtime_autopilot to query an optional local OpenAI-compatible model endpoint.",
+    },
   },
+  commands: [statusCommand, reflexClearCommand, autopilotCommand],
 
-  async onBeforeAction(_tool: string, _args: Record<string, any>, sess?: any) {
-    if (sess?.Runtime) await arm(sess).catch(() => {}); // page may be mid-navigation, next call retries
-  },
+  async onLoad(ctx: PluginContext): Promise<void> {
+    const winMs = typeof ctx.config?.causalWindowMs === "number" ? ctx.config.causalWindowMs : 4000;
 
-  async onAfterAction(tool: string, res: any, sess?: any) {
-    if (tool !== "browser_map" || !sess?.Runtime) return;
-    return tagMap(sess, res, winMs).catch(() => undefined);
-  },
+    ctx.cli?.registerCommand?.(statusCommand);
+    ctx.cli?.registerCommand?.(reflexClearCommand);
+    ctx.cli?.registerCommand?.(autopilotCommand);
 
-  async onLoad(ctx: PluginContext) {
-    winMs = Number(ctx.config?.causalWindowMs) || 4000;
-    const reg = ctx.mcp.registerTool;
-
-    reg(
+    ctx.mcp.registerTool(
       defineTool({
         name: "realtime_canvas",
         description:
-          "Sample what a 2D <canvas> game draws. 'sample' watches a few frames and returns entities (signature, bbox, px/frame velocity) in canvas pixels, plus canvas position/scale to convert to viewport coords. Only sees Canvas2D draw calls made inside requestAnimationFrame; WebGL is invisible to it. 'attach' starts recording early, 'detach' restores the page.",
+          "Records Canvas2D draw calls across requestAnimationFrame ticks and returns moving/static entities with bounding boxes and px/frame velocity.",
         requiresSession: true,
         schema: {
-          action: z.enum(["sample", "attach", "detach"]).default("sample"),
-          frames: z.number().int().min(2).max(15).optional().describe("frames to watch, default 6"),
+          action: z.enum(["sample", "attach", "detach"]).optional().describe("sample (default), attach, or detach"),
+          frames: z.number().optional().describe("Frames to sample (2-15, default 6)"),
         },
-        handler: async (a, ctx) => asText(await canvasTool(sessOf(ctx), a)),
+        handler: async (args: { action?: "sample" | "attach" | "detach"; frames?: number }, rawCtx: any) => {
+          const out = await canvasTool(sessOf(rawCtx), {
+            action: args.action || "sample",
+            frames: args.frames,
+          });
+          return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+        },
       })
     );
 
-    reg(
+    ctx.mcp.registerTool(
       defineTool({
         name: "realtime_reflex",
         description:
-          "Register a rule that runs inside the page every animation frame, no LLM round-trip. Trigger is either a DOM selector (optionally text / only_new) or a canvas expression over named entity signatures from realtime_canvas: names {player:'rect|20x20|#f00'}, js \"gap(E.player[0], E.cactus[0]) < 50\" (E.name = array of {x,y,w,h,vx,vy}; dist() and gap() return Infinity when an entity is missing). Action: click, click_xy, key, or js. Events are synthetic, sites that check isTrusted ignore them. Needs a visible tab.",
+          "Registers, removes, lists, or clears in-page 60Hz requestAnimationFrame rules that click or press keys on DOM or Canvas2D triggers without an LLM round-trip.",
         requiresSession: true,
         schema: {
-          action: z.enum(["add", "remove", "list", "clear"]).default("add"),
-          id: z.string().optional(),
+          action: z.enum(["add", "remove", "list", "clear"]).describe("Operation to perform"),
+          id: z.string().optional().describe("Rule identifier"),
           when: z
             .object({
               selector: z.string().optional(),
-              text: z.string().optional().describe("case-insensitive substring of label/text"),
-              only_new: z.boolean().optional().describe("only elements added after this rule was created"),
-              enabled: z.boolean().optional().describe("skip disabled elements, default true"),
-              canvas: z.object({ names: z.record(z.string()), js: z.string() }).optional(),
+              text: z.string().optional(),
+              only_new: z.boolean().optional(),
+              enabled: z.boolean().optional(),
+              canvas: z
+                .object({
+                  names: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
+                  js: z.string(),
+                })
+                .optional(),
             })
             .optional(),
           do: z
@@ -75,89 +158,130 @@ const plugin = definePlugin({
               x: z.number().optional(),
               y: z.number().optional(),
               key: z.string().optional(),
-              hold_ms: z.number().optional().describe("key hold time, default 40"),
+              hold_ms: z.number().optional(),
               code: z.string().optional(),
             })
             .optional(),
-          cooldown_ms: z.number().optional().describe("default 100"),
-          max_hits: z.number().optional().describe("default 50"),
-          ttl_ms: z.number().optional().describe("default 30000, max 600000"),
+          cooldown_ms: z.number().optional(),
+          max_hits: z.number().optional(),
+          ttl_ms: z.number().optional(),
           stop_selector: z.string().optional(),
         },
-        handler: async (a, ctx) => asText(await reflexTool(sessOf(ctx), a)),
+        handler: async (args: any, rawCtx: any) => {
+          const out = await reflexTool(sessOf(rawCtx), args);
+          return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+        },
       })
     );
 
-    reg(
+    ctx.mcp.registerTool(
       defineTool({
         name: "realtime_autopilot",
         description:
-          "Bounded click loop for short UI sub-goals ('accept cookies', 'click next until Order summary shows'). Ranks visible, unoccluded clickable elements by word overlap with the goal, boosts ones that just appeared and ones inside an open dialog, and never re-clicks a button whose last click changed nothing. Trusted CDP mouse clicks. Skips delete/pay/sign-out style labels unless the goal says so. Not a planner: stops with no_match when no label overlaps the goal. Optional model_url = OpenAI-compatible chat endpoint to pick instead; falls back to the ranker on any failure.",
+          "Runs a bounded in-page click loop toward a short goal ('accept cookies', 'continue') with causal age/dialog scoring and optional local model pick.",
         requiresSession: true,
         schema: {
-          goal: z.string().min(3),
-          max_steps: z.number().int().min(1).max(25).optional().describe("default 8"),
+          goal: z.string().describe("Short natural-language click goal"),
+          max_steps: z.number().optional(),
           stop_when_selector: z.string().optional(),
           stop_when_text: z.string().optional(),
-          stop_when_url: z.string().optional().describe("regex tested against location.href"),
-          avoid_labels: z.string().optional().describe("regex of extra labels never to click"),
-          model_url: z.string().url().optional(),
+          stop_when_url: z.string().optional(),
+          avoid_labels: z.string().optional(),
+          model_url: z.string().optional(),
           model: z.string().optional(),
-          model_timeout_ms: z.number().optional().describe("default 1500"),
+          model_timeout_ms: z.number().optional(),
         },
-        handler: async (a, ctx) => asText(await autopilotTool(sessOf(ctx), a)),
+        handler: async (args: any, rawCtx: any) => {
+          const out = await autopilotTool(sessOf(rawCtx), args);
+          return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+        },
       })
     );
 
-    reg(
+    ctx.mcp.registerTool(
       defineTool({
         name: "realtime_status",
         description:
-          "Probe/canvas/reflex state for the current page. wait_ms (max 30000) blocks until every active reflex has finished, so the agent can sleep through a game or a drop-watch.",
+          "Returns the live state of the in-page probe, Canvas2D spy, and active 60Hz reflex rules. Optionally waits until reflexes complete.",
         requiresSession: true,
-        schema: { wait_ms: z.number().optional() },
-        handler: async (a, ctx) => asText(await statusTool(sessOf(ctx), a.wait_ms)),
+        schema: {
+          wait_ms: z.number().optional().describe("Wait up to wait_ms (max 30000) for active reflexes to finish"),
+        },
+        handler: async (args: { wait_ms?: number }, rawCtx: any) => {
+          const out = await statusTool(sessOf(rawCtx), args.wait_ms ?? 0);
+          return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
+        },
       })
     );
 
-    ctx.mcp.registerPrompt?.(
+    ctx.mcp.registerPrompt(
       definePrompt({
         name: "realtime_watch",
-        title: "Watch & React (60Hz Reflex)",
-        description: "Set up an in-page 60Hz reflex rule or canvas game loop and wait until it finishes.",
+        description:
+          "Snapshot live DOM mutations, active reflexes, and Canvas2D entities, then guide the agent to wire a 60Hz reflex rule.",
         arguments: {
-          goal: z.string().describe("What to watch for and trigger (e.g. 'click Claim as soon as it appears' or 'jump over green obstacles in the canvas game')"),
-          mode: z.string().optional().describe("'dom', 'canvas', or 'auto' (default 'auto')"),
+          goal: z.string().describe("What the reflex should watch for and do"),
+          mode: z.enum(["auto", "dom", "canvas"]).optional().describe("Trigger mode (default: auto)"),
         },
-        handler: async ({ goal, mode }, sctx) => {
-          const feed = await readFeed(sessOf(sctx), winMs).catch(() => ({ active_tab: false }));
-          const m = (mode || "auto").toLowerCase();
+        handler: async (args: { goal: string; mode?: string }, rawCtx: any) => {
+          const feed = await readFeed(sessOf(rawCtx), winMs);
           return [
-            `Goal: ${goal}`,
-            `Mode: ${m}`,
-            `Live state: ${JSON.stringify(feed)}`,
-            m === "canvas"
-              ? "1. Call realtime_canvas with action='sample' to inspect moving entity signatures and velocities.\n2. Arm realtime_reflex with when.canvas ({ names, js }) using gap(E.a[0], E.b[0]) or dist(E.a[0], E.b[0]).\n3. Call realtime_status with wait_ms to block until the reflex completes."
-              : "1. If targeting a 2D <canvas>, run realtime_canvas (action='sample') first to grab entity signatures; if targeting DOM changes, pick a selector/text filter (set only_new=true to ignore elements already on screen).\n2. Arm the rule with realtime_reflex (action='add').\n3. Call realtime_status with wait_ms (up to 30000) to sleep until the reflex hits max_hits or stop_selector.",
-          ].join("\n\n");
+            `Goal: ${args.goal}`,
+            `Mode: ${args.mode || "auto"}`,
+            `Live feed: ${JSON.stringify(feed)}`,
+            `Use realtime_canvas, realtime_reflex, and realtime_status to arm and verify the rule.`,
+          ].join("\n");
         },
       })
     );
 
-    ctx.mcp.registerResource?.(
+    ctx.mcp.registerResource(
+      defineResource({
+        name: "realtime_canvas_feed",
+        uri: "realtime://canvas",
+        description:
+          "Live snapshot of Canvas2D draw counts, rAF frame rate, and active moving entity bounding boxes.",
+        mimeType: "application/json",
+        read: async (_uri: string, _vars: Record<string, string | string[]>, rawCtx: any) => {
+          const sess = sessOf(rawCtx);
+          const canvasData = await canvasTool(sess, { action: "sample", frames: 3 });
+          return JSON.stringify(canvasData, null, 2);
+        },
+      })
+    );
+
+    ctx.mcp.registerResource(
       defineResource({
         name: "realtime_feed",
-        title: "Realtime Page Feed",
         uri: "realtime://feed",
+        description:
+          "Live snapshot of newly mutated DOM elements (with click distance), active 60Hz reflex rules, and tracked Canvas2D entities.",
         mimeType: "application/json",
-        description: "Live snapshot of active 60Hz reflex rules, recently mutated DOM elements with click distance, and tracked Canvas2D entities.",
-        read: async (_uri, _vars, sctx) => JSON.stringify(await readFeed(sessOf(sctx), winMs), null, 2),
+        read: async (_uri: string, _vars: Record<string, string | string[]>, rawCtx: any) => {
+          const feed = await readFeed(sessOf(rawCtx), winMs);
+          return JSON.stringify(feed, null, 2);
+        },
       })
     );
 
-    ctx.logger?.info("realtime up");
+    ctx.logger?.info("@weavetab/plugin-realtime loaded");
+  },
+
+  async onBeforeAction(_action: string, _args: any, rawCtx?: any): Promise<void> {
+    const sess = sessOf(rawCtx);
+    if (sess?.Runtime) {
+      await arm(sess).catch(() => {});
+    }
+  },
+
+  async onAfterAction(action: string, result: any, rawCtx?: any): Promise<any> {
+    if (action !== "browser_map") return;
+    const sess = sessOf(rawCtx);
+    if (!sess?.Runtime) return;
+    const winMs = typeof rawCtx?.config?.causalWindowMs === "number" ? rawCtx.config.causalWindowMs : 4000;
+    return await tagMap(sess, result, winMs).catch(() => undefined);
   },
 });
 
-export default plugin;
-export { plugin };
+export default realtimePlugin;
+export const plugin = realtimePlugin;

@@ -247,11 +247,12 @@ test("autopilot takes the model's pick, and falls back when the model is down", 
     assert.equal(out.steps[0].label, "Beta");
     assert.equal(out.steps[0].via, "model");
   } finally {
+    srv.closeAllConnections?.();
     srv.close();
   }
 
   await open(`<button onclick="document.body.append('welcome')">Welcome tour</button>`);
-  const dead = await autopilotTool(tab, { goal: "start welcome tour", model_url: "http://127.0.0.1:9/x", model_timeout_ms: 300, max_steps: 2 });
+  const dead = await autopilotTool(tab, { goal: "start welcome tour", model_url: "http://127.0.0.1:1/x", model_timeout_ms: 300, max_steps: 2 });
   assert.ok(dead.model_error);
   assert.equal(dead.steps[0].via, "scorer");
 });

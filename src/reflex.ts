@@ -17,7 +17,11 @@ const RUNTIME = `(() => {
     const o = { key: k, code: c[0], keyCode: c[1], which: c[1], bubbles: true, cancelable: true };
     const tgt = document.activeElement || document.body;
     tgt.dispatchEvent(new KeyboardEvent('keydown', o));
-    setTimeout(() => tgt.dispatchEvent(new KeyboardEvent('keyup', o)), hold);
+    if (tgt !== document) document.dispatchEvent(new KeyboardEvent('keydown', o));
+    setTimeout(() => {
+      tgt.dispatchEvent(new KeyboardEvent('keyup', o));
+      if (tgt !== document) document.dispatchEvent(new KeyboardEvent('keyup', o));
+    }, hold);
   };
   const click = (el, x, y) => {
     if (x == null) { const b = el.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top + b.height / 2; }
@@ -49,8 +53,12 @@ const RUNTIME = `(() => {
   const dist = (a, b) => (a && b) ? Math.hypot(a.x + a.w / 2 - b.x - b.w / 2, a.y + a.h / 2 - b.y - b.h / 2) : Infinity;
   const gap = (a, b) => (a && b) ? b.x - (a.x + a.w) : Infinity;
   const E = new Proxy({}, { get: (_, k) => {
-    const cv = window.__wt_cv, sig = rf.names && rf.names[k];
-    return cv && sig ? cv.track(sig, 2) : [];
+    const cv = window.__wt_cv;
+    if (!cv) return [];
+    if (k === 'all') return cv.track('*', 2);
+    if (k === 'moving') return cv.track('*', 2).filter((e) => Math.abs(e.vx) > 0.1 || Math.abs(e.vy) > 0.1);
+    const sig = rf.names && rf.names[k];
+    return sig ? cv.track(sig, 2) : [];
   } });
 
   const tick = () => {
@@ -97,7 +105,7 @@ const RUNTIME = `(() => {
 type Rule = {
   action: "add" | "remove" | "list" | "clear";
   id?: string;
-  when?: { selector?: string; text?: string; only_new?: boolean; enabled?: boolean; canvas?: { names: Record<string, string>; js: string } };
+  when?: { selector?: string; text?: string; only_new?: boolean; enabled?: boolean; canvas?: { names: Record<string, string | string[]>; js: string } };
   do?: { type: "click" | "click_xy" | "key" | "js"; x?: number; y?: number; key?: string; hold_ms?: number; code?: string };
   cooldown_ms?: number;
   max_hits?: number;

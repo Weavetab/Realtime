@@ -70,12 +70,32 @@ const SPY = `(() => {
     });
   };
 
+  const matchSig = (pattern, s) => {
+    if (!pattern) return false;
+    if (pattern === '*' || pattern === true) return true;
+    if (Array.isArray(pattern)) return pattern.some((p) => matchSig(p, s));
+    if (typeof pattern !== 'string') return false;
+    if (pattern.indexOf('*') < 0) return s === pattern;
+    const parts = pattern.split('*');
+    if (!s.startsWith(parts[0])) return false;
+    if (!s.endsWith(parts[parts.length - 1])) return false;
+    let idx = 0;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (!part) continue;
+      const found = s.indexOf(part, idx);
+      if (found < 0) return false;
+      idx = found + part.length;
+    }
+    return true;
+  };
+
   cv.track = (sig, depth) => {
     const fr = cv.frames;
     if (!fr.length) return [];
-    const last = fr[fr.length - 1].d.filter((d) => d.sig === sig);
+    const last = fr[fr.length - 1].d.filter((d) => matchSig(sig, d.sig));
     if (last.length > 200) return last.map((d) => Object.assign({ vx: 0, vy: 0 }, d));
-    const prevs = fr.slice(Math.max(0, fr.length - 1 - depth), -1).reverse().map((f) => f.d.filter((d) => d.sig === sig));
+    const prevs = fr.slice(Math.max(0, fr.length - 1 - (depth || 2)), -1).reverse().map((f) => f.d.filter((d) => matchSig(sig, d.sig)));
     return last.map((d) => {
       let cur = d, steps = 0;
       for (const p of prevs) {

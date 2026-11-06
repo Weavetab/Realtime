@@ -2,145 +2,133 @@
   "$schema": "https://weavetab.dev/schema/plugin.json",
   "name": "@weavetab/plugin-realtime",
   "displayName": "Realtime",
-  "version": "0.2.0",
-  "description": "Causal tags for browser_map, in-page reflex rules, canvas entity sampling and a bounded click loop for Weavetab.",
+  "version": "0.3.0",
+  "description": "Causal age/proximity tags for browser_map, 60Hz in-page reflex rules, canvas entity sampling and a bounded click loop.",
   "entry": "dist/index.js",
+  "agentsMd": "AGENTS.md",
+  "author": {
+    "name": "fy2ne",
+    "url": "https://fy2ne.me"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Weavetab/Realtime#readme",
+  "repository": "https://github.com/Weavetab/Realtime",
   "engines": {
-    "weavetab": ">=2.6.1",
+    "weavetab": "^2.6.2",
     "node": ">=18.0.0"
   },
-  "environments": ["mcp"],
-  "authors": [{ "name": "fy2ne", "role": "Author", "url": "https://fy2ne.me" }],
-  "license": "Apache-2.0",
-  "tags": ["Canvas", "Games", "CDP", "Automation", "Community"],
-  "defaultConfig": { "causalWindowMs": 4000 },
-  "links": { "github": "https://github.com/Weavetab/Realtime", "npm": "https://www.npmjs.com/package/@weavetab/plugin-realtime" },
+  "environments": [
+    "mcp",
+    "cli",
+    "browser"
+  ],
+  "keywords": [
+    "weavetab",
+    "weavetab-plugin",
+    "cdp",
+    "canvas",
+    "browser-automation"
+  ],
+  "defaultConfig": {
+    "causalWindowMs": 4000
+  },
   "permissions": {
     "cdp": {
       "evaluate": true,
       "input": true,
-      "reason": "Injects a MutationObserver, canvas draw recorder and reflex loop into the page, and sends real mouse clicks for realtime_autopilot."
+      "reason": "Installs the in-page MutationObserver, hooks Canvas2D/rAF, and dispatches click/key events."
     },
     "tools": {
       "add": true,
-      "reason": "Registers realtime_canvas, realtime_reflex, realtime_autopilot and realtime_status."
+      "reason": "Registers realtime_canvas, realtime_reflex, realtime_autopilot, and realtime_status."
+    },
+    "commands": {
+      "add": true,
+      "reason": "Registers status and reflex-clear CLI commands."
     },
     "prompts": {
       "add": true,
-      "reason": "Registers /realtime_watch to guide setting up 60Hz DOM or canvas reflexes with live page state."
+      "reason": "Registers the /realtime_watch prompt utility."
     },
     "resources": {
       "add": true,
-      "reason": "Registers @realtime_feed (realtime://feed) for live reflex, causal DOM, and canvas entity telemetry."
+      "reason": "Registers the @realtime_feed resource utility."
     },
     "hooks": {
       "onBeforeAction": true,
       "onAfterAction": true,
-      "reason": "Installs the page probe before any tool runs and appends {new ...} tags to browser_map output."
+      "reason": "Arms the in-page mutation probe before actions and tags newly added nodes in browser_map output."
     },
     "network": {
-      "hosts": ["127.0.0.1", "localhost"],
-      "reason": "realtime_autopilot can POST candidates to a model_url the caller supplies (meant for a local OpenAI-compatible server)."
+      "domains": [
+        "127.0.0.1",
+        "localhost"
+      ],
+      "reason": "Allows realtime_autopilot to query an optional local OpenAI-compatible model endpoint."
     }
   },
-  "tools": [
+  "commands": [
     {
-      "name": "realtime_canvas",
-      "description": "Sample what a 2D canvas game draws: entities with signature, bbox and px/frame velocity.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "action": { "type": "string", "enum": ["sample", "attach", "detach"], "default": "sample" },
-          "frames": { "type": "integer", "minimum": 2, "maximum": 15, "description": "frames to watch, default 6" }
+      "name": "status",
+      "description": "Read the in-page realtime probe state, canvas frame counter, and active 60Hz reflex rules.",
+      "usage": "weavetab plugin use realtime status [--wait_ms <ms>]",
+      "requiresSession": true,
+      "options": [
+        {
+          "name": "wait_ms",
+          "type": "number",
+          "description": "Block up to wait_ms until active reflexes finish",
+          "required": false
         }
-      }
+      ]
     },
     {
-      "name": "realtime_reflex",
-      "description": "Register, list or remove rules that run inside the page every animation frame.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "action": { "type": "string", "enum": ["add", "remove", "list", "clear"], "default": "add" },
-          "id": { "type": "string" },
-          "when": {
-            "type": "object",
-            "properties": {
-              "selector": { "type": "string" },
-              "text": { "type": "string" },
-              "only_new": { "type": "boolean" },
-              "enabled": { "type": "boolean" },
-              "canvas": {
-                "type": "object",
-                "properties": {
-                  "names": { "type": "object", "additionalProperties": { "type": "string" } },
-                  "js": { "type": "string" }
-                },
-                "required": ["names", "js"]
-              }
-            }
-          },
-          "do": {
-            "type": "object",
-            "properties": {
-              "type": { "type": "string", "enum": ["click", "click_xy", "key", "js"] },
-              "x": { "type": "number" },
-              "y": { "type": "number" },
-              "key": { "type": "string" },
-              "hold_ms": { "type": "number" },
-              "code": { "type": "string" }
-            },
-            "required": ["type"]
-          },
-          "cooldown_ms": { "type": "number" },
-          "max_hits": { "type": "number" },
-          "ttl_ms": { "type": "number" },
-          "stop_selector": { "type": "string" }
-        }
-      }
+      "name": "reflex-clear",
+      "description": "Clear all active 60Hz reflex rules on the active browser tab via CLI.",
+      "usage": "weavetab plugin use realtime reflex-clear",
+      "requiresSession": true,
+      "options": []
     },
     {
-      "name": "realtime_autopilot",
-      "description": "Bounded click loop for short UI sub-goals, ranked by label/goal word overlap and element recency.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "goal": { "type": "string", "minLength": 3 },
-          "max_steps": { "type": "integer", "minimum": 1, "maximum": 25 },
-          "stop_when_selector": { "type": "string" },
-          "stop_when_text": { "type": "string" },
-          "stop_when_url": { "type": "string" },
-          "avoid_labels": { "type": "string" },
-          "model_url": { "type": "string", "format": "uri" },
-          "model": { "type": "string" },
-          "model_timeout_ms": { "type": "number" }
+      "name": "autopilot",
+      "description": "Run bounded in-page autopilot toward a goal directly via CLI.",
+      "usage": "weavetab plugin use realtime autopilot --goal <text> [--max_steps <n>]",
+      "requiresSession": true,
+      "options": [
+        {
+          "name": "goal",
+          "type": "string",
+          "description": "Natural language click goal",
+          "required": true
         },
-        "required": ["goal"]
-      }
-    },
-    {
-      "name": "realtime_status",
-      "description": "Probe, canvas recorder and reflex state for the current page; wait_ms blocks until active reflexes finish.",
-      "inputSchema": {
-        "type": "object",
-        "properties": { "wait_ms": { "type": "number" } }
-      }
+        {
+          "name": "max_steps",
+          "type": "number",
+          "description": "Maximum click steps (default 5)",
+          "required": false
+        },
+        {
+          "name": "stop_when_text",
+          "type": "string",
+          "description": "Stop when this text appears",
+          "required": false
+        }
+      ]
     }
   ],
   "prompts": [
     {
       "name": "realtime_watch",
-      "title": "Watch & React (60Hz Reflex)",
-      "description": "Set up an in-page 60Hz reflex rule or canvas game loop and wait until it finishes.",
+      "description": "Snapshot live DOM mutations, active reflexes, and Canvas2D entities, then guide the agent to wire a 60Hz reflex rule.",
       "arguments": [
         {
           "name": "goal",
-          "description": "What to watch for and trigger (e.g. 'click Claim as soon as it appears' or 'jump over green obstacles in the canvas game')",
+          "description": "What the reflex should watch for and do",
           "required": true
         },
         {
           "name": "mode",
-          "description": "'dom', 'canvas', or 'auto' (default 'auto')",
+          "description": "Trigger mode (auto, dom, canvas)",
           "required": false
         }
       ]
@@ -148,11 +136,135 @@
   ],
   "resources": [
     {
+      "name": "realtime_canvas_feed",
+      "uri": "realtime://canvas",
+      "description": "Live snapshot of Canvas2D draw counts, rAF frame rate, and active moving entity bounding boxes.",
+      "mimeType": "application/json"
+    },
+    {
       "name": "realtime_feed",
-      "title": "Realtime Page Feed",
       "uri": "realtime://feed",
-      "mimeType": "application/json",
-      "description": "Live snapshot of active 60Hz reflex rules, recently mutated DOM elements with click distance, and tracked Canvas2D entities."
+      "description": "Live snapshot of newly mutated DOM elements (with click distance), active 60Hz reflex rules, and tracked Canvas2D entities.",
+      "mimeType": "application/json"
+    }
+  ],
+  "tools": [
+    {
+      "name": "realtime_canvas",
+      "description": "Records Canvas2D draw calls across requestAnimationFrame ticks and returns moving/static entities with bounding boxes and px/frame velocity.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "sample",
+              "attach",
+              "detach"
+            ],
+            "description": "sample (default), attach, or detach"
+          },
+          "frames": {
+            "type": "number",
+            "description": "Frames to sample (2-15, default 6)"
+          }
+        }
+      }
+    },
+    {
+      "name": "realtime_reflex",
+      "description": "Registers, removes, lists, or clears in-page 60Hz requestAnimationFrame rules that click or press keys on DOM or Canvas2D triggers without an LLM round-trip.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "add",
+              "remove",
+              "list",
+              "clear"
+            ],
+            "description": "Operation to perform"
+          },
+          "id": {
+            "type": "string",
+            "description": "Rule identifier"
+          },
+          "when": {
+            "type": "object",
+            "description": "DOM selector or Canvas2D expression trigger"
+          },
+          "do": {
+            "type": "object",
+            "description": "Response action (click, click_xy, key, js)"
+          },
+          "cooldown_ms": {
+            "type": "number",
+            "description": "Minimum ms between firings (default 100)"
+          },
+          "max_hits": {
+            "type": "number",
+            "description": "Auto-stop after N hits (default 50)"
+          },
+          "ttl_ms": {
+            "type": "number",
+            "description": "Rule lifetime in ms (default 30000)"
+          },
+          "stop_selector": {
+            "type": "string",
+            "description": "Selector that halts the rule when present"
+          }
+        },
+        "required": [
+          "action"
+        ]
+      }
+    },
+    {
+      "name": "realtime_autopilot",
+      "description": "Runs a bounded in-page click loop toward a short goal ('accept cookies', 'continue') with causal age/dialog scoring and optional local model pick.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string",
+            "description": "Short natural-language click goal"
+          },
+          "max_steps": {
+            "type": "number",
+            "description": "Maximum clicks (default 8, max 25)"
+          },
+          "stop_when_selector": {
+            "type": "string",
+            "description": "Stop when selector becomes visible"
+          },
+          "stop_when_text": {
+            "type": "string",
+            "description": "Stop when body text contains string"
+          },
+          "stop_when_url": {
+            "type": "string",
+            "description": "Stop when URL matches regex"
+          }
+        },
+        "required": [
+          "goal"
+        ]
+      }
+    },
+    {
+      "name": "realtime_status",
+      "description": "Returns the live state of the in-page probe, Canvas2D spy, and active 60Hz reflex rules. Optionally waits until reflexes complete.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "wait_ms": {
+            "type": "number",
+            "description": "Wait up to wait_ms (max 30000) for active reflexes to finish"
+          }
+        }
+      }
     }
   ]
 }
